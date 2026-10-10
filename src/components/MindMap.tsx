@@ -12,11 +12,20 @@ interface MindMapProps {
   activeSlug: string | null;
   onSelect: (slug: string) => void;
   onNavigate: (slug: string) => void;
+  viewport?: ViewportSnapshot;
+  onViewportChange?: (snapshot: ViewportSnapshot) => void;
+}
+
+interface ViewportSnapshot {
+  x: number;
+  y: number;
+  k: number;
 }
 
 interface TreeNode {
   id: string;
   title: string;
+  displayTitle: string;
   category: string;
   children: TreeNode[];
   depth: number;
@@ -41,6 +50,32 @@ const CATEGORY_LABELS: Record<string, string> = {
   guides: "指南",
   docs: "文档",
   api: "API",
+};
+
+const RELATION_MODES = [
+  {
+    value: "outgoing",
+    label: "出链",
+    description: "当前页面指向的页面",
+  },
+  {
+    value: "incoming",
+    label: "入链",
+    description: "引用当前页面的页面",
+  },
+  {
+    value: "both",
+    label: "双向",
+    description: "同时显示出链和入链",
+  },
+] as const;
+
+type RelationMode = (typeof RELATION_MODES)[number]["value"];
+
+const RELATION_MODE_LABELS: Record<RelationMode, string> = {
+  outgoing: "出链",
+  incoming: "入链",
+  both: "双向",
 };
 
 function isLightTheme(): boolean {
@@ -88,9 +123,15 @@ export default function MindMap({
   activeSlug,
   onSelect,
   onNavigate,
+  viewport,
+  onViewportChange,
 }: MindMapProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const initialViewportRef = useRef(viewport);
+  const transformRef = useRef(d3.zoomIdentity);
+  const initializedTransformRef = useRef(false);
   const [maxDepth, setMaxDepth] = useState(3);
+  const [relationMode, setRelationMode] = useState<RelationMode>("outgoing");
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -118,7 +159,7 @@ export default function MindMap({
       // Don't duplicate if going back to same node
       if (prev.length > 0 && prev[prev.length - 1].slug === activeSlug) return prev;
       // Keep max 10
-      const next = [...prev, { slug: activeSlug, title: node.title }];
+      const next = [...prev, { slug: activeSlug, title: node.displayTitle }];
       return next.length > 10 ? next.slice(-10) : next;
     });
   }, [activeSlug, nodes]);
@@ -151,7 +192,10 @@ export default function MindMap({
     const q = searchQuery.toLowerCase();
     const matches = new Set<string>();
     for (const n of nodes) {
-      if (n.title.toLowerCase().includes(q)) {
+      if (
+        n.title.toLowerCase().includes(q) ||
+        n.displayTitle.toLowerCase().includes(q)
+      ) {
         matches.add(n.id);
       }
     }
@@ -175,21 +219,25 @@ export default function MindMap({
     const map = new Map<string, Set<string>>();
     for (const n of nodes) map.set(n.id, new Set());
     for (const l of links) {
-      map.get(l.source)?.add(l.target);
-      map.get(l.target)?.add(l.source);
+      if (relationMode === "outgoing" || relationMode === "both") {
+        map.get(l.source)?.add(l.target);
+      }
+      if (relationMode === "incoming" || relationMode === "both") {
+        map.get(l.target)?.add(l.source);
+      }
     }
     return map;
-  }, [nodes, links]);
+  }, [nodes, links, relationMode]);
 
   // Build tree from active node (with category filtering)
   const treeData = useMemo(() => {
     let centerSlug = activeSlug || (nodes.length > 0 ? nodes[0].id : null);
     if (!centerSlug) return null;
 
-    // If the chosen center has no connections (e.g. README, which typically uses
-    // plain Markdown links rather than [[wiki links]] and so is an orphan in the
-    // graph), fall back to the most-connected node so the mind map isn't empty.
-    if ((adj.get(centerSlug)?.size ?? 0) === 0) {
+    // Only the undirected association view falls back to a hub for an orphan.
+    // In directional modes, an orphan is meaningful: it has no outgoing or
+    // incoming references in the selected direction and should remain the center.
+    if (relationMode === "both" && (adj.get(centerSlug)?.size ?? 0) === 0) {
       let hub: string | null = null;
       let best = 0;
       for (const n of nodes) {
@@ -228,6 +276,7 @@ export default function MindMap({
       return {
         id,
         title: node.title,
+        displayTitle: node.displayTitle,
         category: node.category,
         children,
         depth,
@@ -238,7 +287,7 @@ export default function MindMap({
     const tree = buildTree(centerSlug, 0);
     countDescendants(tree);
     return tree;
-  }, [nodes, adj, activeSlug, maxDepth, hiddenCategories]);
+  }, [nodes, adj, activeSlug, maxDepth, hiddenCategories, relationMode]);
 
   // Page lookup for hover preview
   const pageMap = useMemo(() => {
@@ -257,8 +306,16 @@ export default function MindMap({
     const tags = Array.isArray(page.frontmatter.tags)
       ? (page.frontmatter.tags as string[])
       : [];
-    return { title: page.title, category: page.category, summary, tags, connectionCount };
-  }, [hoveredNode, pageMap, adj]);
+    const node = nodes.find((item) => item.id === hoveredNode);
+    return {
+      title: node?.displayTitle ?? page.title,
+      fullTitle: page.title,
+      category: page.category,
+      summary,
+      tags,
+      connectionCount,
+    };
+  }, [hoveredNode, pageMap, adj, nodes]);
 
   const handleNodeClick = useCallback(
     (nodeId: string) => {
@@ -309,16 +366,32 @@ export default function MindMap({
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.3, 3])
       .on("zoom", (event) => {
+        transformRef.current = event.transform;
         g.attr(
           "transform",
           `translate(${width / 2 + event.transform.x},${height / 2 + event.transform.y}) scale(${event.transform.k})`
         );
+        onViewportChange?.({
+          x: event.transform.x,
+          y: event.transform.y,
+          k: event.transform.k,
+        });
       });
     (svg as d3.Selection<SVGSVGElement, unknown, null, undefined>).call(
       zoom as unknown as (
         sel: d3.Selection<SVGSVGElement, unknown, null, undefined>
       ) => void
     );
+
+    const savedViewport = initialViewportRef.current;
+    const restoredTransform = !initializedTransformRef.current && savedViewport
+      ? d3.zoomIdentity
+          .translate(savedViewport.x, savedViewport.y)
+          .scale(savedViewport.k)
+      : transformRef.current;
+    transformRef.current = restoredTransform;
+    initializedTransformRef.current = true;
+    svg.call(zoom.transform, restoredTransform);
 
     const root = d3.hierarchy(treeData);
     const treeLayout = d3
@@ -335,6 +408,24 @@ export default function MindMap({
       >()
       .angle((d) => d.x)
       .radius((d) => d.y);
+
+    const arrowMarkerId = `mindmap-arrow-${relationMode}`;
+    if (relationMode !== "both") {
+      svg
+        .append("defs")
+        .append("marker")
+        .attr("id", arrowMarkerId)
+        .attr("viewBox", "0 0 8 8")
+        .attr("refX", 7)
+        .attr("refY", 4)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto-start-reverse")
+        .append("path")
+        .attr("d", "M 0 0 L 8 4 L 0 8 Z")
+        .attr("fill", "#7ba3c4")
+        .attr("opacity", 0.8);
+    }
 
     // Draw links
     const linkGroup = g.append("g");
@@ -364,6 +455,10 @@ export default function MindMap({
         .attr("fill", "none")
         .attr("stroke", `url(#${gradientId})`)
         .attr("stroke-width", 2)
+        .attr(
+          relationMode === "outgoing" ? "marker-end" : "marker-start",
+          relationMode === "both" ? null : `url(#${arrowMarkerId})`
+        )
         .attr("opacity", 0)
         .transition()
         .delay(i * 30)
@@ -476,7 +571,7 @@ export default function MindMap({
         return d.depth === 0 ? "600" : "400";
       })
       .text((d) => {
-        const t = d.data.title;
+        const t = d.data.displayTitle;
         const maxLen = d.depth === 0 ? 30 : 20 - d.depth * 4;
         return t.length > maxLen ? t.slice(0, maxLen - 1) + "…" : t;
       })
@@ -513,7 +608,15 @@ export default function MindMap({
         if (hasSearch && !searchMatches.has(d.data.id)) return 0.15;
         return 1;
       });
-  }, [treeData, activeSlug, handleNodeClick, adj, searchMatches]);
+  }, [
+    treeData,
+    activeSlug,
+    handleNodeClick,
+    adj,
+    searchMatches,
+    relationMode,
+    onViewportChange,
+  ]);
 
   useEffect(() => {
     render();
@@ -548,10 +651,10 @@ export default function MindMap({
       <div className="absolute top-4 left-4 bg-bg-primary/80 backdrop-blur-md border border-border-primary rounded-xl px-4 py-3 max-w-[320px]">
         <div className="text-xs text-text-tertiary mb-1">脑图中心</div>
         <div className="text-sm font-medium text-text-primary">
-          {treeData.title}
+          {treeData.displayTitle}
         </div>
         <div className="text-xs text-text-tertiary mt-1">
-          {treeData.children.length} 个直接关联 · {treeData.totalDescendants} 个节点
+          关系：{RELATION_MODE_LABELS[relationMode]} · {treeData.children.length} 个直接关联 · {treeData.totalDescendants} 个节点
         </div>
 
         {/* Breadcrumb history */}
@@ -581,6 +684,33 @@ export default function MindMap({
 
       {/* Right controls: depth + search + category filter */}
       <div className="absolute top-4 right-4 flex flex-col gap-2 items-end">
+        {/* Relation direction */}
+        <div className="bg-bg-primary/80 backdrop-blur-md border border-border-primary rounded-xl px-3 py-2 flex items-center gap-2">
+          <span className="text-xs text-text-tertiary">关系</span>
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="脑图关系方向"
+          >
+            {RELATION_MODES.map((mode) => (
+              <button
+                key={mode.value}
+                type="button"
+                aria-pressed={relationMode === mode.value}
+                title={mode.description}
+                onClick={() => setRelationMode(mode.value)}
+                className={`px-2 py-0.5 rounded-md text-[10px] transition-colors cursor-pointer border ${
+                  relationMode === mode.value
+                    ? "text-accent-vivid bg-accent-vivid/10 border-accent-vivid/30"
+                    : "text-text-tertiary border-transparent hover:text-text-secondary hover:border-border-primary"
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Depth control */}
         <div className="bg-bg-primary/80 backdrop-blur-md border border-border-primary rounded-xl px-4 py-2.5 flex items-center gap-3">
           <span className="text-xs text-text-tertiary">层深</span>
@@ -664,10 +794,10 @@ export default function MindMap({
               }}
             />
             <span className="text-sm font-medium text-text-primary truncate">
-              {hoveredPage.title}
+              <span title={hoveredPage.fullTitle}>{hoveredPage.title}</span>
             </span>
             <span className="text-xs text-text-tertiary shrink-0">
-              {hoveredPage.connectionCount} 关联
+              {RELATION_MODE_LABELS[relationMode]} {hoveredPage.connectionCount}
             </span>
           </div>
           {hoveredPage.summary && (

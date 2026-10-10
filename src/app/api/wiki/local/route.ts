@@ -1,43 +1,62 @@
-import { NextRequest } from "next/server";
-import { readdir, readFile, stat } from "fs/promises";
-import { join, relative } from "path";
+import { readdir, readFile, realpath, stat } from "fs/promises";
+import { basename, join, relative, sep } from "path";
 import { buildWikiData } from "@/lib/github";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const MAX_MD_FILES = 5000;
+const MAX_MD_BYTES = 25 * 1024 * 1024;
+
+interface CollectState {
+  files: number;
+  bytes: number;
+}
 
 async function collectMdFiles(
   dir: string,
-  base: string
+  base: string,
+  state: CollectState = { files: 0, bytes: 0 }
 ): Promise<{ path: string; content: string }[]> {
   const results: { path: string; content: string }[] = [];
   const entries = await readdir(dir, { withFileTypes: true });
 
-  for (const entry of entries) {
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const fullPath = join(dir, entry.name);
     if (entry.isDirectory() && !entry.name.startsWith(".")) {
-      results.push(...(await collectMdFiles(fullPath, base)));
+      results.push(...(await collectMdFiles(fullPath, base, state)));
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       const content = await readFile(fullPath, "utf-8");
-      const relPath = relative(base, fullPath);
+      const relPath = relative(base, fullPath).split(sep).join("/");
       results.push({ path: relPath, content });
+      state.files += 1;
+      state.bytes += Buffer.byteLength(content, "utf8");
+      if (state.files > MAX_MD_FILES) {
+        throw new Error(`本地 Wiki 页面数量超过限制（${MAX_MD_FILES}）。`);
+      }
+      if (state.bytes > MAX_MD_BYTES) {
+        throw new Error(`本地 Wiki 内容超过限制（${MAX_MD_BYTES / 1024 / 1024} MB）。`);
+      }
     }
   }
 
   return results;
 }
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl;
-  const dirPath = searchParams.get("path");
-
-  if (!dirPath) {
-    return Response.json({ error: "Missing path parameter" }, { status: 400 });
+export async function GET() {
+  // The root is configured on the server and is never accepted from the
+  // browser. This keeps a private Wiki path out of the URL and prevents the
+  // endpoint from becoming an arbitrary local-file browser.
+  const configuredRoot = process.env.SELFOPENWIKI_WIKI_ROOT?.trim();
+  if (!configuredRoot) {
+    return Response.json(
+      { error: "未配置 SELFOPENWIKI_WIKI_ROOT。请在 .env.local 中设置 Wiki 根目录。" },
+      { status: 503 }
+    );
   }
 
-  // Resolve ~ to home directory
-  const resolved = dirPath.startsWith("~")
-    ? join(process.env.HOME || "/", dirPath.slice(1))
-    : dirPath;
-
   try {
+    const resolved = await realpath(configuredRoot);
     const info = await stat(resolved);
     if (!info.isDirectory()) {
       return Response.json(
@@ -55,11 +74,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Use directory name as repo name
-    const dirName = resolved.split("/").filter(Boolean).pop() || "local";
-    const wikiData = buildWikiData("local", dirName, files);
+    const dirName = basename(resolved) || "local";
+    const wikiData = buildWikiData("local", dirName, files, {
+      hierarchyMode: "selfwiki",
+    });
 
-    return Response.json(wikiData);
+    return Response.json(wikiData, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown error";

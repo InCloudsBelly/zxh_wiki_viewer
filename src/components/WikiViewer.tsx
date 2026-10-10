@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
   BookOpen,
   Search,
@@ -14,6 +14,7 @@ import {
   BarChart3,
   LayoutGrid,
   BookA,
+  GitBranch,
 } from "lucide-react";
 import type { WikiData } from "@/lib/github";
 import Sidebar from "@/components/Sidebar";
@@ -21,6 +22,7 @@ import MarkdownContent from "@/components/MarkdownContent";
 import TableOfContents from "@/components/TableOfContents";
 import CosmosGraph from "@/components/CosmosGraph";
 import MindMap from "@/components/MindMap";
+import HierarchyMap from "@/components/HierarchyMap";
 import StatsView from "@/components/StatsView";
 import GalleryView from "@/components/GalleryView";
 import GlossaryView from "@/components/GlossaryView";
@@ -28,12 +30,37 @@ import SearchDialog from "@/components/SearchDialog";
 import ThemeToggle from "@/components/ThemeToggle";
 import Link from "next/link";
 
-type ViewMode = "read" | "cosmos" | "mindmap" | "stats" | "gallery" | "glossary";
+type ViewMode =
+  | "read"
+  | "cosmos"
+  | "hierarchy"
+  | "mindmap"
+  | "stats"
+  | "gallery"
+  | "glossary";
+
+type SourceViewMode = Exclude<ViewMode, "read">;
+
+interface ViewportSnapshot {
+  x: number;
+  y: number;
+  k: number;
+  scrollLeft?: number;
+  scrollTop?: number;
+}
+
+interface NavigationFrame {
+  viewMode: SourceViewMode;
+  readSlug: string;
+  restoreSlug: string;
+  viewport?: ViewportSnapshot;
+}
 
 const VIEW_MODES: { key: ViewMode; label: string; icon: typeof BookOpen; activeClass: string }[] = [
   { key: "read", label: "阅读", icon: BookOpen, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
   { key: "gallery", label: "卡片", icon: LayoutGrid, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
   { key: "cosmos", label: "关系图", icon: Globe, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
+  { key: "hierarchy", label: "目录图", icon: GitBranch, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
   { key: "mindmap", label: "脑图", icon: Brain, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
   { key: "glossary", label: "术语", icon: BookA, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
   { key: "stats", label: "统计", icon: BarChart3, activeClass: "bg-accent-vivid/10 text-accent-vivid" },
@@ -63,6 +90,11 @@ function pushSlugToHistory(slug: string) {
   history.pushState(null, "", `#${encodeURIComponent(slug)}`);
 }
 
+function replaceSlugInHistory(slug: string) {
+  if (readSlugFromHash() === slug) return;
+  history.replaceState(null, "", `#${encodeURIComponent(slug)}`);
+}
+
 export default function WikiViewer({ data, loading, error, label, owner, repo }: WikiViewerProps) {
   const [initialHash] = useState(readSlugFromHash);
   const [activeSlug, setActiveSlug] = useState<string | null>(null);
@@ -70,6 +102,11 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [readingProgress, setReadingProgress] = useState(0);
+  const [navigationStack, setNavigationStack] = useState<NavigationFrame[]>([]);
+  const [viewportSnapshots, setViewportSnapshots] = useState<
+    Partial<Record<SourceViewMode, ViewportSnapshot>>
+  >({});
+  const viewportSnapshotsRef = useRef<Partial<Record<SourceViewMode, ViewportSnapshot>>>({});
 
   const initialSlug = useMemo(() => {
     if (!data) return null;
@@ -197,10 +234,98 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
     pushSlugToHistory(slug);
   }, []);
 
+  const updateViewportSnapshot = useCallback(
+    (viewMode: SourceViewMode, snapshot: ViewportSnapshot) => {
+      viewportSnapshotsRef.current[viewMode] = snapshot;
+    },
+    []
+  );
+
+  const handleNavigateFromView = useCallback(
+    (viewMode: SourceViewMode, slug: string, restoreSlug = slug) => {
+      setNavigationStack((previous) => [
+        ...previous,
+        {
+          viewMode,
+          readSlug: slug,
+          restoreSlug,
+          viewport: viewportSnapshotsRef.current[viewMode],
+        },
+      ]);
+      setActiveSlug(slug);
+      setViewMode("read");
+      setSidebarOpen(false);
+      setReadingProgress(0);
+      document
+        .getElementById("wiki-content-area")
+        ?.scrollTo({ top: 0, behavior: "auto" });
+      pushSlugToHistory(slug);
+    },
+    []
+  );
+
+  const handleReturnToView = useCallback(() => {
+    const frame = navigationStack[navigationStack.length - 1];
+    if (!frame) return;
+
+    setNavigationStack((previous) => previous.slice(0, -1));
+    if (frame.viewport) {
+      setViewportSnapshots((previous) => ({
+        ...previous,
+        [frame.viewMode]: frame.viewport,
+      }));
+    }
+    setActiveSlug(frame.restoreSlug);
+    setViewMode(frame.viewMode);
+    setSidebarOpen(false);
+    setReadingProgress(0);
+    replaceSlugInHistory(frame.restoreSlug);
+  }, [navigationStack]);
+
   const handleGraphSelect = useCallback((slug: string) => {
     setActiveSlug(slug);
     pushSlugToHistory(slug);
   }, []);
+
+  const handleCosmosNavigate = useCallback(
+    (slug: string) =>
+      handleNavigateFromView("cosmos", slug, resolvedActiveSlug ?? slug),
+    [handleNavigateFromView, resolvedActiveSlug]
+  );
+  const handleHierarchyNavigate = useCallback(
+    (slug: string) =>
+      handleNavigateFromView("hierarchy", slug, resolvedActiveSlug ?? slug),
+    [handleNavigateFromView, resolvedActiveSlug]
+  );
+  const handleMindMapNavigate = useCallback(
+    (slug: string) =>
+      handleNavigateFromView("mindmap", slug, resolvedActiveSlug ?? slug),
+    [handleNavigateFromView, resolvedActiveSlug]
+  );
+  const handleGalleryNavigate = useCallback(
+    (slug: string) => handleNavigateFromView("gallery", slug),
+    [handleNavigateFromView]
+  );
+  const handleGlossaryNavigate = useCallback(
+    (slug: string) => handleNavigateFromView("glossary", slug),
+    [handleNavigateFromView]
+  );
+  const handleStatsNavigate = useCallback(
+    (slug: string) => handleNavigateFromView("stats", slug),
+    [handleNavigateFromView]
+  );
+  const handleCosmosViewportChange = useCallback(
+    (snapshot: ViewportSnapshot) => updateViewportSnapshot("cosmos", snapshot),
+    [updateViewportSnapshot]
+  );
+  const handleHierarchyViewportChange = useCallback(
+    (snapshot: ViewportSnapshot) => updateViewportSnapshot("hierarchy", snapshot),
+    [updateViewportSnapshot]
+  );
+  const handleMindMapViewportChange = useCallback(
+    (snapshot: ViewportSnapshot) => updateViewportSnapshot("mindmap", snapshot),
+    [updateViewportSnapshot]
+  );
 
   if (loading) {
     return (
@@ -242,8 +367,21 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
 
   if (!data) return null;
 
+  const returnFrame =
+    viewMode === "read" ? navigationStack[navigationStack.length - 1] : undefined;
+  const returnViewLabel = returnFrame
+    ? VIEW_MODES.find((mode) => mode.key === returnFrame.viewMode)?.label
+    : undefined;
+  const returnView = returnFrame
+    ? VIEW_MODES.find((mode) => mode.key === returnFrame.viewMode)
+    : undefined;
+  const ReturnViewIcon = returnView?.icon ?? GitBranch;
+
   const showSidebar =
-    viewMode === "read" || viewMode === "mindmap" || viewMode === "cosmos";
+    viewMode === "read" ||
+    viewMode === "mindmap" ||
+    viewMode === "cosmos" ||
+    viewMode === "hierarchy";
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -282,6 +420,18 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {returnFrame && returnViewLabel && (
+            <button
+              type="button"
+              onClick={handleReturnToView}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm text-accent-vivid bg-accent-vivid/10 border border-accent-vivid/30 hover:bg-accent-vivid/20 transition-colors cursor-pointer"
+              title={`返回${returnViewLabel}`}
+              aria-label={`返回${returnViewLabel}`}
+            >
+              <ReturnViewIcon className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-xs">返回{returnViewLabel}</span>
+            </button>
+          )}
           <ThemeToggle />
           <button
             type="button"
@@ -296,22 +446,27 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
           </button>
 
           <div className="flex items-center bg-bg-tertiary border border-border-primary rounded-lg overflow-hidden">
-            {VIEW_MODES.map((mode) => (
+            {VIEW_MODES.map((mode) => {
+              const isReturnSource = returnFrame?.viewMode === mode.key;
+              const isActive = viewMode === mode.key || isReturnSource;
+              return (
               <button
                 key={mode.key}
                 type="button"
                 onClick={() => setViewMode(mode.key)}
                 className={`px-2.5 py-1.5 text-sm flex items-center gap-1.5 transition-colors cursor-pointer ${
-                  viewMode === mode.key
+                  isActive
                     ? mode.activeClass
                     : "text-text-tertiary hover:text-text-secondary"
-                }`}
+                } ${isReturnSource ? "ring-1 ring-inset ring-accent-vivid/50" : ""}`}
                 title={mode.label}
+                aria-current={isActive ? "page" : undefined}
               >
                 <mode.icon className="w-3.5 h-3.5" />
                 <span className="hidden lg:inline text-xs">{mode.label}</span>
               </button>
-            ))}
+              );
+            })}
           </div>
         </div>
       </header>
@@ -331,7 +486,7 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
             } lg:translate-x-0 fixed lg:relative z-40 lg:z-auto h-[calc(100vh-3.5rem)] transition-transform duration-200`}
           >
             <Sidebar
-              categories={data.categories}
+              hierarchy={data.hierarchy}
               activeSlug={resolvedActiveSlug}
               onSelect={viewMode === "read" ? handleNavigate : handleGraphSelect}
             />
@@ -376,7 +531,21 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
               nodes={data.graph.nodes}
               links={data.graph.links}
               activeSlug={resolvedActiveSlug}
-              onSelect={handleNavigate}
+              onSelect={handleCosmosNavigate}
+              viewport={viewportSnapshots.cosmos}
+              onViewportChange={handleCosmosViewportChange}
+            />
+          </div>
+        )}
+
+        {viewMode === "hierarchy" && (
+          <div className="flex-1">
+            <HierarchyMap
+              hierarchy={data.hierarchy}
+              activeSlug={resolvedActiveSlug}
+              onSelect={handleHierarchyNavigate}
+              viewport={viewportSnapshots.hierarchy}
+              onViewportChange={handleHierarchyViewportChange}
             />
           </div>
         )}
@@ -389,26 +558,37 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
               pages={data.pages}
               activeSlug={resolvedActiveSlug}
               onSelect={handleGraphSelect}
-              onNavigate={handleNavigate}
+              onNavigate={handleMindMapNavigate}
+              viewport={viewportSnapshots.mindmap}
+              onViewportChange={handleMindMapViewportChange}
             />
           </div>
         )}
 
         {viewMode === "gallery" && (
           <div className="flex-1 overflow-hidden">
-            <GalleryView data={data} onSelect={handleNavigate} />
+            <GalleryView
+              data={data}
+              onSelect={handleGalleryNavigate}
+            />
           </div>
         )}
 
         {viewMode === "glossary" && (
           <div className="flex-1 overflow-hidden">
-            <GlossaryView data={data} onSelect={handleNavigate} />
+            <GlossaryView
+              data={data}
+              onSelect={handleGlossaryNavigate}
+            />
           </div>
         )}
 
         {viewMode === "stats" && (
           <div className="flex-1 overflow-hidden">
-            <StatsView data={data} onSelect={handleNavigate} />
+            <StatsView
+              data={data}
+              onSelect={handleStatsNavigate}
+            />
           </div>
         )}
       </div>

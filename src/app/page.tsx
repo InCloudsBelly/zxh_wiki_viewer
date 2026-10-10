@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, GitBranch } from "lucide-react";
 import { parseGitHubUrl } from "@/lib/github";
 import ThemeToggle from "@/components/ThemeToggle";
+import Link from "next/link";
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -22,16 +23,6 @@ function XIcon({ className }: { className?: string }) {
   );
 }
 
-function isLocalPath(input: string): boolean {
-  const trimmed = input.trim();
-  return (
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("~/") ||
-    trimmed.startsWith("./") ||
-    trimmed.startsWith("../")
-  );
-}
-
 const EXAMPLES = [
   { label: "Hermes Wiki", url: "cclank/Hermes-Wiki" },
   { label: "TiDB Docs", url: "pingcap/docs" },
@@ -46,17 +37,10 @@ export default function Home() {
     e.preventDefault();
     const trimmed = url.trim();
 
-    // Local path
-    if (isLocalPath(trimmed)) {
-      setError("");
-      router.push(`/wiki/local?path=${encodeURIComponent(trimmed)}`);
-      return;
-    }
-
     // GitHub repo
     const parsed = parseGitHubUrl(trimmed);
     if (!parsed) {
-      setError("请输入 GitHub 仓库地址（owner/repo）或本地路径（/path/to/wiki）");
+      setError("请输入 GitHub 仓库地址（owner/repo）");
       return;
     }
     setError("");
@@ -118,7 +102,7 @@ export default function Home() {
               type="text"
               value={url}
               onChange={(e) => { setUrl(e.target.value); setError(""); }}
-              placeholder="owner/repo 或 /本地路径"
+              placeholder="owner/repo"
               className="flex-1 bg-transparent px-3 py-3.5 text-text-primary placeholder:text-text-tertiary outline-none text-sm"
             />
             <button
@@ -133,6 +117,14 @@ export default function Home() {
             <p className="mt-3 text-xs text-accent-rose text-center">{error}</p>
           )}
         </form>
+
+        <Link
+          href="/wiki/local"
+          className="-mt-10 flex items-center gap-2 px-4 py-2 border border-border-secondary rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+        >
+          打开个人 Wiki
+          <ArrowRight className="w-3.5 h-3.5" />
+        </Link>
 
         {/* Examples */}
         <div className="flex items-center gap-3">

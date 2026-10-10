@@ -9,9 +9,20 @@ interface Props {
   links: GraphLink[];
   activeSlug: string | null;
   onSelect: (slug: string) => void;
+  viewport?: ViewportSnapshot;
+  onViewportChange?: (snapshot: ViewportSnapshot) => void;
 }
 
-// Morandi-inspired but with more color distinction for graph readability
+interface ViewportSnapshot {
+  x: number;
+  y: number;
+  k: number;
+}
+
+// Keep category colors as a fallback for nodes that are not present in the
+// explicit SelfWiki hierarchy. Relationship dots themselves use hierarchy
+// level colors so the graph carries the same L0-L6 visual language as the
+// directory map.
 const CAT_COLORS: Record<string, string> = {
   root: "#d4a96a",
   concepts: "#7ba3c4",
@@ -22,10 +33,32 @@ const CAT_COLORS: Record<string, string> = {
   api: "#d48a8a",
 };
 
+const LEVEL_COLORS: Record<number, string> = {
+  0: "#f4c95d",
+  1: "#3bc49a",
+  2: "#a875ff",
+  3: "#ff8c42",
+  4: "#4c9cff",
+  5: "#e567a8",
+  6: "#6fd8e8",
+};
+
+const LEVEL_LABELS: Record<number, string> = {
+  0: "根节点",
+  1: "大主题",
+  2: "技术专题",
+  3: "流程阶段 / 子主题",
+  4: "子主题 / 页面",
+  5: "深层页面",
+  6: "细分页面",
+};
+
 interface SNode extends d3.SimulationNodeDatum {
   id: string;
   title: string;
+  displayTitle: string;
   category: string;
+  level?: number;
   linkCount: number;
 }
 interface SLink extends d3.SimulationLinkDatum<SNode> {
@@ -56,7 +89,21 @@ function truncateLabel(title: string, max: number): string {
   return title.length > max ? title.slice(0, max - 1) + "…" : title;
 }
 
-export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Props) {
+function getNodeColor(node: Pick<SNode, "category" | "level">): string {
+  if (node.level !== undefined && LEVEL_COLORS[node.level]) {
+    return LEVEL_COLORS[node.level];
+  }
+  return CAT_COLORS[node.category] || "#7c8eff";
+}
+
+export default function ObsidianGraph({
+  nodes,
+  links,
+  activeSlug,
+  onSelect,
+  viewport,
+  onViewportChange,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const hoveredRef = useRef<string | null>(null);
@@ -69,6 +116,8 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
   const dragNodeRef = useRef<SNode | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<HTMLCanvasElement, unknown> | null>(null);
   const didFocusMountRef = useRef(false);
+  const initialViewportRef = useRef(viewport);
+  const initializedTransformRef = useRef(false);
   // Only redraw when something actually changed (sim tick, hover, zoom, drag,
   // resize, selection). Once the layout settles and there's no interaction the
   // canvas stops repainting instead of burning 60fps on a static image.
@@ -158,7 +207,7 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
     // First pass: draw all node dots with glow
     sortedNodes.forEach((n) => {
       if (n.x == null || n.y == null) return;
-      const color = CAT_COLORS[n.category] || "#7c8eff";
+      const color = getNodeColor(n);
       const isActive = n.id === activeRef.current;
       const isHover = n.id === hoveredRef.current;
       const inNb = nb.has(n.id);
@@ -224,7 +273,8 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
 
     labelCandidates.forEach(({ node: n }) => {
       if (n.x == null || n.y == null) return;
-      const color = CAT_COLORS[n.category] || "#7c8eff";
+      const color = getNodeColor(n);
+      const labelColor = CAT_COLORS[n.category] || "#7c8eff";
       const isActive = n.id === activeRef.current;
       const isHover = n.id === hoveredRef.current;
       const inNb = nb.has(n.id);
@@ -239,7 +289,7 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
 
-      const label = truncateLabel(n.title, isHover || isActive ? 40 : 20);
+      const label = truncateLabel(n.displayTitle, isHover || isActive ? 40 : 20);
       const tw = ctx.measureText(label).width;
       const px = 6 / t.k;
       const py = 3 / t.k;
@@ -273,7 +323,7 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
       }
 
       ctx.fillStyle = dim ? (light ? "rgba(60, 50, 40, 0.06)" : "rgba(148, 163, 184, 0.06)") :
-                       (isHover || isActive) ? (light ? "#2c2825" : "#ffffff") : color;
+                       (isHover || isActive) ? (light ? "#2c2825" : "#ffffff") : labelColor;
       ctx.fillText(label, n.x, ly);
     });
 
@@ -375,7 +425,15 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
     // Zoom + pan
     const zoom = d3.zoom<HTMLCanvasElement, unknown>()
       .scaleExtent([0.1, 6])
-      .on("zoom", (e) => { transformRef.current = e.transform; needsRedrawRef.current = true; });
+      .on("zoom", (e) => {
+        transformRef.current = e.transform;
+        needsRedrawRef.current = true;
+        onViewportChange?.({
+          x: e.transform.x,
+          y: e.transform.y,
+          k: e.transform.k,
+        });
+      });
     zoomRef.current = zoom;
 
     const sel = d3.select(canvasEl);
@@ -383,27 +441,45 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
       zoom as unknown as (s: d3.Selection<HTMLCanvasElement, unknown, null, undefined>) => void
     );
 
-    // Immediate auto-fit since layout is pre-computed
-    {
-      const pad = 60;
-      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-      for (const n of sNodes) {
-        if (n.x != null && n.y != null) {
-          x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
-          x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y);
+    if (!initializedTransformRef.current) {
+      const savedViewport = initialViewportRef.current;
+      if (savedViewport) {
+        const restoredTransform = d3.zoomIdentity
+          .translate(savedViewport.x, savedViewport.y)
+          .scale(savedViewport.k);
+        transformRef.current = restoredTransform;
+        (sel as d3.Selection<HTMLCanvasElement, unknown, null, undefined>).call(
+          (zoom as unknown as d3.ZoomBehavior<HTMLCanvasElement, unknown>).transform,
+          restoredTransform
+        );
+      } else {
+        // Immediate auto-fit since layout is pre-computed
+        const pad = 60;
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (const n of sNodes) {
+          if (n.x != null && n.y != null) {
+            x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y);
+            x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y);
+          }
+        }
+        if (x0 < Infinity) {
+          const gw = x1 - x0 + pad * 2;
+          const gh = y1 - y0 + pad * 2;
+          const s = Math.min(W / gw, H / gh, 2.0);
+          const tx = d3.zoomIdentity
+            .translate(W / 2, H / 2).scale(s).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+          transformRef.current = tx;
+          // Also set on the selection so zoom state stays in sync
+          (sel as d3.Selection<HTMLCanvasElement, unknown, null, undefined>)
+            .call((zoom as unknown as d3.ZoomBehavior<HTMLCanvasElement, unknown>).transform, tx);
         }
       }
-      if (x0 < Infinity) {
-        const gw = x1 - x0 + pad * 2;
-        const gh = y1 - y0 + pad * 2;
-        const s = Math.min(W / gw, H / gh, 2.0);
-        const tx = d3.zoomIdentity
-          .translate(W / 2, H / 2).scale(s).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
-        transformRef.current = tx;
-        // Also set on the selection so zoom state stays in sync
-        (sel as d3.Selection<HTMLCanvasElement, unknown, null, undefined>)
-          .call((zoom as unknown as d3.ZoomBehavior<HTMLCanvasElement, unknown>).transform, tx);
-      }
+      initializedTransformRef.current = true;
+    } else {
+      (sel as d3.Selection<HTMLCanvasElement, unknown, null, undefined>).call(
+        (zoom as unknown as d3.ZoomBehavior<HTMLCanvasElement, unknown>).transform,
+        transformRef.current
+      );
     }
 
     // Hit test
@@ -512,7 +588,7 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
       canvasEl.removeEventListener("mouseleave", endDrag);
       window.removeEventListener("resize", onResize);
     };
-  }, [nodes, links, onSelect, draw]);
+  }, [nodes, links, onSelect, onViewportChange, draw]);
 
   return (
     <div className="relative w-full h-full min-h-[500px] bg-bg-primary overflow-hidden">
@@ -520,14 +596,24 @@ export default function ObsidianGraph({ nodes, links, activeSlug, onSelect }: Pr
 
       {/* Legend */}
       <div className="absolute bottom-4 left-4 bg-bg-primary/70 backdrop-blur border border-border-primary rounded-lg p-2.5 space-y-1">
-        {Object.entries(CAT_COLORS)
-          .filter(([c]) => nodes.some((n) => n.category === c))
-          .map(([c, color]) => (
-            <div key={c} className="flex items-center gap-2 text-[11px]">
+        {Object.entries(LEVEL_COLORS)
+          .filter(([level]) =>
+            nodes.some((node) => node.level === Number(level))
+          )
+          .map(([level, color]) => (
+            <div key={`level-${level}`} className="flex items-center gap-2 text-[11px]">
               <div className="w-2 h-2 rounded-full" style={{ background: color }} />
-              <span className="text-text-tertiary">{c}</span>
+              <span className="text-text-tertiary">
+                L{level} · {LEVEL_LABELS[Number(level)]}
+              </span>
             </div>
           ))}
+        {nodes.some((node) => node.level === undefined) && (
+          <div className="flex items-center gap-2 text-[11px]">
+            <div className="w-2 h-2 rounded-full" style={{ background: "#7c8eff" }} />
+            <span className="text-text-tertiary">未归入层级</span>
+          </div>
+        )}
       </div>
 
       {/* Hint */}
