@@ -585,6 +585,7 @@ function buildHierarchy(repo: string, pages: WikiPage[]): WikiTreeNode {
 type TaxonomySelector = {
   exact?: string[];
   prefixes?: string[];
+  patterns?: RegExp[];
 };
 
 type SelfWikiTaxonomyDefinition = {
@@ -623,6 +624,7 @@ function unionSelectors(
   return {
     exact: selectors.flatMap((selector) => selector.exact ?? []),
     prefixes: selectors.flatMap((selector) => selector.prefixes ?? []),
+    patterns: selectors.flatMap((selector) => selector.patterns ?? []),
   };
 }
 
@@ -639,7 +641,8 @@ function matchesTaxonomySelector(
     (selector.prefixes ?? []).some((candidate) => {
       const prefix = normalizedTaxonomyPath(candidate).replace(/\/$/, "");
       return normalized === prefix || normalized.startsWith(`${prefix}/`);
-    })
+    }) ||
+    (selector.patterns ?? []).some((pattern) => pattern.test(normalized))
   );
 }
 
@@ -774,9 +777,11 @@ function buildPhysicalTaxonomyChildren(
   return root.children;
 }
 
-function sceneExportTaxonomy(): SelfWikiTaxonomyDefinition {
+function sceneExportTaxonomy(pages: WikiPage[]): SelfWikiTaxonomyDefinition {
   const sceneRoot = "unreal-engine/scene-export";
   const mobileRoot = "projects/mobile-asset-replacement";
+  const consolidatedScene = pages.some((page) => normalizedTaxonomyPath(page.path).startsWith("scene-export/"));
+  const consolidatedMobile = pages.some((page) => normalizedTaxonomyPath(page.path).startsWith("mobile-asset-replacement/"));
   const shadowVisibility = `${sceneRoot}/shadow-visibility`;
   const common = `${sceneRoot}/common`;
   const mismRoot = `${sceneRoot}/mism`;
@@ -1025,6 +1030,7 @@ function sceneExportTaxonomy(): SelfWikiTaxonomyDefinition {
     selector: unionSelectors(
       exactOrDirectory(sceneRoot),
       pathPrefix(mobileRoot),
+      pathPrefix("scene-export", "mobile-asset-replacement"),
       exactPath("sources/mobile-asset-replacement-source-set.md")
     ),
     children: [
@@ -1033,8 +1039,9 @@ function sceneExportTaxonomy(): SelfWikiTaxonomyDefinition {
         title: "C7 导出流程",
         level: 2,
         category: "技术专题",
-        selector: exactOrDirectory(sceneRoot),
-        representative: `${sceneRoot}.md`,
+        selector: unionSelectors(exactOrDirectory(sceneRoot), pathPrefix("scene-export")),
+        representative: consolidatedScene ? "scene-export/framework-and-builders.md" : `${sceneRoot}.md`,
+        physicalRoot: consolidatedScene ? "scene-export" : undefined,
         children: stageDefinitions,
       },
       {
@@ -1044,17 +1051,18 @@ function sceneExportTaxonomy(): SelfWikiTaxonomyDefinition {
         category: "技术专题",
         selector: unionSelectors(
           pathPrefix(mobileRoot),
+          pathPrefix("mobile-asset-replacement"),
           exactPath("sources/mobile-asset-replacement-source-set.md")
         ),
-        representative: `${mobileRoot}/overview.md`,
+        representative: consolidatedMobile ? undefined : `${mobileRoot}/overview.md`,
         children: [
           {
             key: "asset-replace-solution",
             title: "AssetReplace 方案",
             level: 3,
             category: "子主题",
-            selector: exactOrDirectory(`${mobileRoot}/asset-replace`),
-            representative: `${mobileRoot}/asset-replace.md`,
+            selector: unionSelectors(exactOrDirectory(`${mobileRoot}/asset-replace`), exactPath("mobile-asset-replacement/asset-replace.md")),
+            representative: consolidatedMobile ? "mobile-asset-replacement/asset-replace.md" : `${mobileRoot}/asset-replace.md`,
             physicalRoot: `${mobileRoot}/asset-replace`,
           },
           {
@@ -1062,8 +1070,8 @@ function sceneExportTaxonomy(): SelfWikiTaxonomyDefinition {
             title: "MeshGRASS 方案",
             level: 3,
             category: "子主题",
-            selector: exactOrDirectory(`${mobileRoot}/meshgrass`),
-            representative: `${mobileRoot}/meshgrass.md`,
+            selector: unionSelectors(exactOrDirectory(`${mobileRoot}/meshgrass`), exactPath("mobile-asset-replacement/meshgrass.md")),
+            representative: consolidatedMobile ? "mobile-asset-replacement/meshgrass.md" : `${mobileRoot}/meshgrass.md`,
             physicalRoot: `${mobileRoot}/meshgrass`,
           },
           {
@@ -1080,8 +1088,51 @@ function sceneExportTaxonomy(): SelfWikiTaxonomyDefinition {
   };
 }
 
-function renderingTaxonomy(): SelfWikiTaxonomyDefinition {
+function renderingTaxonomy(pages: WikiPage[]): SelfWikiTaxonomyDefinition {
+  const independentTopics = [
+    { key: "lumen", title: "Lumen", representative: "rendering/lumen.md", entry: "architecture-and-frame.md" },
+    { key: "nanite", title: "Nanite", representative: "rendering/nanite.md", entry: "architecture-and-dataflow.md" },
+    { key: "rdg", title: "RDG", representative: "rendering/rdg-design.md", entry: "graph-execution.md" },
+    { key: "gpu-scene", title: "GPUScene", representative: "gpu-scene/data-protocol.md", entry: "data-protocol.md" },
+    { key: "instance-culling", title: "Instance Culling", representative: "instance-culling/design.md", entry: "design.md" },
+    { key: "rendering-tools", title: "渲染调试工具", representative: "rendering-tools/draw-command-tags.md", entry: "draw-command-tags.md" },
+  ].map((topic) => {
+    const consolidated = pages.some((page) =>
+      normalizedTaxonomyPath(page.path).startsWith(`${topic.key}/`)
+    );
+    const sources: TaxonomySelector = {
+      patterns: [new RegExp(`^sources/${topic.key}-[^/]+\\.md$`)],
+    };
+    return {
+      key: `${topic.key}-topic`,
+      title: topic.title,
+      level: 2,
+      category: "技术专题",
+      representative: consolidated ? `${topic.key}/${topic.entry}` : topic.representative,
+      selector: unionSelectors(
+        pathPrefix(topic.key),
+        exactPath(
+          topic.representative,
+          `rendering/${topic.key}-source-code-map.md`
+        ),
+        { patterns: [new RegExp(`^rendering/${topic.key}-\\d+-[^/]+\\.md$`)] },
+        sources
+      ),
+      physicalRoot: consolidated ? topic.key : "rendering",
+      children: [
+        {
+          key: `${topic.key}-evidence`,
+          title: "来源与证据",
+          level: 3,
+          category: "子主题",
+          selector: sources,
+          physicalRoot: "sources",
+        },
+      ],
+    };
+  });
   const kgprPaths = [
+    "kgpr",
     "architecture",
     "data",
     "history",
@@ -1099,9 +1150,12 @@ function renderingTaxonomy(): SelfWikiTaxonomyDefinition {
     category: "大主题",
     selector: unionSelectors(
       ...kgprPaths.map((path) => pathPrefix(path)),
-      exactPath("sources/kgpr-source-set.md")
+      exactPath("sources/kgpr-source-set.md"),
+      ...independentTopics.map((topic) => topic.selector)
     ),
     children: [
+      // Claim independent topics before KGPR's legacy directory-wide selector.
+      ...independentTopics,
       {
         key: "kgpr-topic",
         title: "KGPR 技术专题",
@@ -1111,7 +1165,10 @@ function renderingTaxonomy(): SelfWikiTaxonomyDefinition {
           ...kgprPaths.map((path) => pathPrefix(path)),
           exactPath("sources/kgpr-source-set.md")
         ),
-        representative: "overview/comprehensive-technical-design.md",
+        representative: pages.some((page) => normalizedTaxonomyPath(page.path) === "kgpr/architecture.md")
+          ? "kgpr/architecture.md"
+          : "overview/comprehensive-technical-design.md",
+        physicalRoot: "kgpr",
         children: [
           {
             key: "kgpr-design",
@@ -1201,10 +1258,10 @@ function renderingTaxonomy(): SelfWikiTaxonomyDefinition {
   };
 }
 
-function buildSelfWikiTaxonomyDefinition(): SelfWikiTaxonomyDefinition[] {
+function buildSelfWikiTaxonomyDefinition(pages: WikiPage[]): SelfWikiTaxonomyDefinition[] {
   return [
-    sceneExportTaxonomy(),
-    renderingTaxonomy(),
+    sceneExportTaxonomy(pages),
+    renderingTaxonomy(pages),
     {
       key: "selfwiki-guides",
       title: "SelfWiki 使用与维护",
@@ -1282,18 +1339,21 @@ function buildSelfWikiTaxonomyNode(
 }
 
 export function buildSelfWikiHierarchy(pages: WikiPage[]): WikiTreeNode {
+  const entry = pages.find((page) => normalizedTaxonomyPath(page.path) === "readme.md");
   const root: WikiTreeNode = {
     id: "taxonomy:selfwiki",
-    title: "SelfWiki",
-    path: "",
+    title: entry?.title ?? "SelfWiki",
+    path: entry?.path ?? "",
     kind: "root",
     category: "SelfWiki",
     level: 0,
+    pageSlug: entry?.slug,
     children: [],
   };
   const claimed = new Set<string>();
+  if (entry) claimed.add(normalizedTaxonomyPath(entry.path));
 
-  for (const definition of buildSelfWikiTaxonomyDefinition()) {
+  for (const definition of buildSelfWikiTaxonomyDefinition(pages)) {
     const selected = pages.filter((page) =>
       matchesTaxonomySelector(page.path, definition.selector)
     );

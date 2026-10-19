@@ -246,6 +246,11 @@ body {
 .wiki-content strong { color: var(--text-primary); font-weight: 600; }
 .wiki-content img { max-width: 100%; border-radius: 8px; }
 
+.wiki-content svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Syntax highlighting: dark mode */
 .hljs { background: transparent !important; color: var(--text-primary) !important; }
 .hljs-keyword { color: #a494b5 !important; }

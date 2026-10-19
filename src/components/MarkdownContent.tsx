@@ -229,6 +229,24 @@ function MarkdownContent({
   slugByName,
   backlinks = [],
 }: MarkdownContentProps) {
+  const pendingAnchor = useRef<{ slug: string; fragment: string } | null>(null);
+  const scrollToAnchor = useCallback((fragment: string) => {
+    let id = fragment;
+    try { id = decodeURIComponent(fragment); } catch { /* Keep literal IDs. */ }
+    const target = document.getElementById(id);
+    if (!target) return;
+    for (let parent = target.parentElement; parent; parent = parent.parentElement) {
+      if (parent.tagName === "DETAILS") parent.setAttribute("open", "");
+    }
+    target.scrollIntoView({ block: "start", behavior: "auto" });
+  }, []);
+
+  useEffect(() => {
+    const pending = pendingAnchor.current;
+    pendingAnchor.current = null;
+    if (pending?.slug === page.slug) scrollToAnchor(pending.fragment);
+  }, [page.slug, scrollToAnchor]);
+
   // Replace [[wiki-links]] with clickable links
   const processedContent = useMemo(
     () =>
@@ -268,7 +286,7 @@ function MarkdownContent({
         );
       }
       // Internal .md link inside the wiki.
-      if (href && !href.startsWith("http") && !href.startsWith("#") && href.endsWith(".md")) {
+      if (href && !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(href) && /\.md(?:#.*)?$/i.test(href)) {
         const resolvedPath = resolveMarkdownPath(href, page.path);
         const resolvedKey = resolvedPath.replace(/\.md$/i, "").toLowerCase();
         const basenameKey = resolvedKey.split("/").pop() ?? resolvedKey;
@@ -281,7 +299,15 @@ function MarkdownContent({
           return (
             <button
               type="button"
-              onClick={() => onNavigate(targetSlug)}
+              onClick={() => {
+                const fragment = href.includes("#") ? href.slice(href.indexOf("#") + 1) : "";
+                if (fragment && targetSlug === page.slug) {
+                  scrollToAnchor(fragment);
+                  return;
+                }
+                pendingAnchor.current = fragment ? { slug: targetSlug, fragment } : null;
+                onNavigate(targetSlug);
+              }}
               className="text-text-link hover:brightness-125 transition-colors cursor-pointer bg-transparent p-0 inline"
             >
               {children}
@@ -298,7 +324,10 @@ function MarkdownContent({
       }
       // Anchor link
       if (href?.startsWith("#")) {
-        return <a href={href}>{children}</a>;
+        return <a href={href} onClick={(event) => {
+          event.preventDefault();
+          scrollToAnchor(href.slice(1));
+        }}>{children}</a>;
       }
       return (
         <a href={href ?? undefined} target="_blank" rel="noopener noreferrer">
