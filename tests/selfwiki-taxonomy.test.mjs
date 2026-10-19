@@ -248,7 +248,11 @@ test("literal details tags and HTML comments cannot hide the reader contents", (
   }).outputText, file);
   for (const note of [
     "使用 `<details>` 折叠维护信息。",
+    "使用 `<details>\n标签` 展示代码字面量。",
     "使用 ``<details> ` literal`` 折叠维护信息。",
+    "使用 ``<details>\n包含 ` 的标签`` 展示代码字面量。",
+    "\\<details> 是转义后的文字。",
+    "`未闭合的代码标记。\n\n<details>\n## 维护信息\n</details>",
     "<!-- <details> -->",
     "<!--\n<details>\n-->",
     "`<!--` 是注释的开始标记。",
@@ -258,6 +262,7 @@ test("literal details tags and HTML comments cannot hide the reader contents", (
     }));
     assert.ok(html.includes('href="#核心机制"'), note);
     assert.ok(html.includes('href="#使用边界"'), note);
+    assert.ok(!html.includes("维护信息"), note);
   }
 });
 

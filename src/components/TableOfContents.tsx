@@ -13,15 +13,30 @@ interface TableOfContentsProps {
   content: string;
 }
 
+function hasClosingCodeSpan(lines: string[], startLine: number, startColumn: number, marker: string): boolean {
+  for (let index = startLine; index < lines.length; index++) {
+    const line = lines[index];
+    if (index > startLine && (
+      /^\s*$/.test(line) ||
+      /^ {0,3}(?:#{1,6}(?:\s|$)|>|[-+*]\s|\d+[.)]\s|`{3,}|~{3,}|<(?:!--|\/?details[\s>]))/.test(line)
+    )) return false;
+    const remainder = index === startLine ? line.slice(startColumn) : line;
+    if (Array.from(remainder.matchAll(/`+/g)).some((match) => match[0] === marker)) return true;
+  }
+  return false;
+}
+
 function extractHeadings(markdown: string): TocItem[] {
   const headings: TocItem[] = [];
   const lines = markdown.split("\n");
   let codeFence: { marker: string; length: number } | null = null;
   let detailsDepth = 0;
   let inHtmlComment = false;
+  let codeSpan: string | null = null;
   const idCount = new Map<string, number>();
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
     const fence = line.trim().match(/^(`{3,}|~{3,})(.*)$/);
     if (fence && !inHtmlComment) {
       if (!codeFence) {
@@ -46,11 +61,14 @@ function extractHeadings(markdown: string): TocItem[] {
         if (token === "-->") inHtmlComment = false;
         continue;
       }
+      if (codeSpan) {
+        if (token === codeSpan) codeSpan = null;
+        continue;
+      }
+      const escaped = line.slice(0, tokens[index].index).match(/\\+$/)?.[0].length;
+      if (escaped && escaped % 2 !== 0) continue;
       if (token.startsWith("`")) {
-        const closeIndex = tokens.findIndex((candidate, position) =>
-          position > index && candidate[0] === token
-        );
-        if (closeIndex >= 0) index = closeIndex;
+        if (hasClosingCodeSpan(lines, lineIndex, tokens[index].index! + token.length, token)) codeSpan = token;
       } else if (token === "<!--") {
         inHtmlComment = true;
       } else if (/^<details[\s>]/i.test(token)) {
