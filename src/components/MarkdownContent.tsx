@@ -1,12 +1,11 @@
 "use client";
 
-import { memo, useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { memo, useState, useCallback, useRef, useEffect } from "react";
 import { Check, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
-import rehypeRaw from "rehype-raw";
-import rehypeSlug from "rehype-slug";
+import { markdownOptions } from "../lib/markdown.mjs";
 import type { WikiPage } from "@/lib/github";
 import type { Components } from "react-markdown";
 import MermaidBlock from "./MermaidBlock";
@@ -137,76 +136,6 @@ function resolveMarkdownPath(href: string, pagePath: string): string {
   return normalizeRelativePath(pageDir ? `${pageDir}/${cleanHref}` : cleanHref);
 }
 
-function normalizeWikiLinkTarget(rawLink: string): string {
-  return rawLink
-    .split("|")[0]
-    .split("#")[0]
-    .trim()
-    .replace(/\.md$/i, "")
-    .toLowerCase();
-}
-
-function getWikiLinkLabel(rawLink: string): string {
-  const parts = rawLink.split("|");
-  return (parts[1] ?? parts[0]).trim();
-}
-
-// Known HTML element names. Anything outside this set (and outside an <svg>
-// subtree) that rehype-raw parsed from the source is treated as a literal text
-// token, not a real element — see rehypeNeutralizeUnknownTags below.
-const HTML_TAGS = new Set([
-  "a", "abbr", "address", "area", "article", "aside", "audio", "b", "base",
-  "bdi", "bdo", "blockquote", "body", "br", "button", "canvas", "caption",
-  "cite", "code", "col", "colgroup", "data", "datalist", "dd", "del", "details",
-  "dfn", "dialog", "div", "dl", "dt", "em", "embed", "fieldset", "figcaption",
-  "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head",
-  "header", "hgroup", "hr", "html", "i", "iframe", "img", "input", "ins", "kbd",
-  "label", "legend", "li", "link", "main", "map", "mark", "menu", "meta",
-  "meter", "nav", "noscript", "object", "ol", "optgroup", "option", "output",
-  "p", "param", "picture", "pre", "progress", "q", "rp", "rt", "ruby", "s",
-  "samp", "script", "section", "select", "slot", "small", "source", "span",
-  "strong", "style", "sub", "summary", "sup", "table", "tbody", "td", "template",
-  "textarea", "tfoot", "th", "thead", "time", "title", "tr", "track", "u", "ul",
-  "var", "video", "wbr",
-]);
-
-interface HastNode {
-  type: string;
-  tagName?: string;
-  value?: string;
-  children?: HastNode[];
-}
-
-// rehype-raw faithfully parses the source's raw HTML, but wiki docs are full of
-// placeholder tokens like <name>, <id>, <profile>, <untrusted_tool_result> that
-// describe prompt/data structure — not real HTML. React then floods the console
-// with "unrecognized tag" warnings. This plugin runs after rehype-raw and turns
-// any non-HTML element (outside an <svg>) back into its literal "<tag>" text,
-// preserving children. Real HTML and inline SVG are left untouched.
-function rehypeNeutralizeUnknownTags() {
-  return (tree: HastNode) => {
-    const walk = (node: HastNode, insideSvg: boolean) => {
-      if (!Array.isArray(node.children)) return;
-      const next: HastNode[] = [];
-      for (const child of node.children) {
-        if (child.type === "element" && child.tagName) {
-          const childInSvg = insideSvg || child.tagName === "svg";
-          if (!childInSvg && !HTML_TAGS.has(child.tagName)) {
-            walk(child, childInSvg);
-            next.push({ type: "text", value: `<${child.tagName}>` });
-            if (child.children) next.push(...child.children);
-            continue;
-          }
-          walk(child, childInSvg);
-        }
-        next.push(child);
-      }
-      node.children = next;
-    };
-    walk(tree, false);
-  };
-}
-
 // Detect ASCII diagram content (arrows, box-drawing characters)
 const ASCII_DIAGRAM_CHARS = /[┌┐└┘├┤┬┴┼─│▼▲►◄↓↑→←╔╗╚╝║═]/;
 const ARROW_PATTERN = /[→←↓↑▼▲│┌└├┤]/;
@@ -229,6 +158,7 @@ function MarkdownContent({
   slugByName,
   backlinks = [],
 }: MarkdownContentProps) {
+  const options = markdownOptions(slugByName);
   const pendingAnchor = useRef<{ slug: string; fragment: string } | null>(null);
   const scrollToAnchor = useCallback((fragment: string) => {
     let id = fragment;
@@ -246,24 +176,6 @@ function MarkdownContent({
     pendingAnchor.current = null;
     if (pending?.slug === page.slug) scrollToAnchor(pending.fragment);
   }, [page.slug, scrollToAnchor]);
-
-  // Replace [[wiki-links]] with clickable links
-  const processedContent = useMemo(
-    () =>
-      page.content.replace(
-        /\[\[([^\]]+)\]\]/g,
-        (_, rawLink: string) => {
-          const target = normalizeWikiLinkTarget(rawLink);
-          const label = getWikiLinkLabel(rawLink);
-          const slug = slugByName.get(target);
-          if (slug) {
-            return `[${label}](#wiki:${slug})`;
-          }
-          return `\`${label}\``;
-        }
-      ),
-    [page.content, slugByName]
-  );
 
   const backlinksClassName =
     page.links.length > 0
@@ -429,16 +341,15 @@ function MarkdownContent({
       {/* Markdown content */}
       <div className="wiki-content">
         <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={options.remarkPlugins}
           rehypePlugins={[
-            rehypeRaw,
-            rehypeNeutralizeUnknownTags,
+            ...(options.rehypePlugins || []),
+            [rehypeKatex, { trust: false }],
             rehypeHighlight,
-            rehypeSlug,
           ]}
           components={components}
         >
-          {processedContent}
+          {page.content}
         </ReactMarkdown>
       </div>
 

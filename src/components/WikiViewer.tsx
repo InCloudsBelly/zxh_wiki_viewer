@@ -519,7 +519,7 @@ export default function WikiViewer({ data, loading, error, label, owner, repo }:
             </div>
             {activePage && (
               <div className="pr-6 pt-8 hidden xl:block">
-                <TableOfContents content={activePage.content} />
+                <TableOfContents content={activePage.content} slugByName={slugByName} />
               </div>
             )}
           </div>

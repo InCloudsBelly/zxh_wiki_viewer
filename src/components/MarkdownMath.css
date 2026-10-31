@@ -1,0 +1,28 @@
+.wiki-content .katex {
+  font-size: 1.08em;
+}
+
+/* Article SVG sizing must not flatten KaTeX's stretchy roots and accents. */
+.wiki-content .katex svg {
+  max-width: none;
+  height: inherit;
+}
+
+.wiki-content .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.5em 0;
+}
+
+/* Start wide equations at their left edge instead of clipping centered content. */
+.wiki-content .katex-display > .katex {
+  width: max-content;
+  min-width: 100%;
+}
+
+.wiki-content .katex-error {
+  color: var(--accent-vivid) !important;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

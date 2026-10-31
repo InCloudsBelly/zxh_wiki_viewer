@@ -211,10 +211,10 @@ test("reader contents omit folded maintenance headings and literal code examples
   component.require = createRequire(file);
   component._compile(compiled, file);
   const markdown = [
-    "# 专题", "## 核心机制",
-    "<details>", "<summary>维护信息</summary>", "## 核心机制",
-    "<details>", "### 精确指纹", "</details>", "</details>",
-    "~~~~text", "## 代码示例里的标题", "~~~~", "## 使用边界",
+    "# 专题", "", "## 核心机制", "",
+    "<details>", "<summary>维护信息</summary>", "", "## 核心机制", "",
+    "<details>", "", "### 精确指纹", "", "</details>", "", "</details>", "",
+    "~~~~text", "## 代码示例里的标题", "~~~~", "", "## 使用边界",
   ].join("\n");
   const html = renderToStaticMarkup(React.createElement(component.exports.default, { content: markdown }));
   assert.ok(html.includes('href="#核心机制"'));
