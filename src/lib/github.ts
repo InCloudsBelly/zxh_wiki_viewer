@@ -1463,6 +1463,7 @@ export function buildWikiData(
       ? buildSelfWikiHierarchy(pages)
       : buildHierarchy(repo, pages);
   const pageLevels = new Map<string, number>();
+  const entryTitles = new Map<string, string>();
 
   function collectPageLevels(node: WikiTreeNode): void {
     if (node.pageSlug !== undefined && node.level !== undefined) {
@@ -1473,6 +1474,7 @@ export function buildWikiData(
           ? node.level
           : Math.max(previousLevel, node.level)
       );
+      if (node.kind === "directory") entryTitles.set(node.pageSlug, node.title);
     }
     for (const child of node.children) collectPageLevels(child);
   }
@@ -1508,7 +1510,7 @@ export function buildWikiData(
   const nodes: GraphNode[] = pages.map((p) => ({
     id: p.slug,
     title: p.title,
-    displayTitle: getDisplayTitle(p.title, p.path),
+    displayTitle: entryTitles.get(p.slug) ?? getDisplayTitle(p.title, p.path),
     category: p.category,
     level: pageLevels.get(p.slug),
     linkCount: p.links.length,

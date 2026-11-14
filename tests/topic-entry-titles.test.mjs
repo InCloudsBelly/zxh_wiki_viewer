@@ -34,6 +34,7 @@ for (const hierarchyMode of ["filesystem", "selfwiki"]) {
       assert.equal(directory.kind, "directory");
       assert.equal(directory.title, topic.name);
       assert.equal(directory.pageSlug, entry.slug);
+      assert.equal(data.graph.nodes.find((item) => item.id === entry.slug)?.displayTitle, topic.name);
       assert.equal(entry.title, topic.title);
       assert.ok(entry.content.includes(`# ${topic.title}`));
     });
@@ -66,5 +67,6 @@ for (const hierarchyMode of ["filesystem", "selfwiki"]) {
     assert.ok(entry);
     assert.equal(directory?.title, "SKInstance");
     assert.equal(directory?.pageSlug, entry.slug);
+    assert.equal(data.graph.nodes.find((item) => item.id === entry.slug)?.displayTitle, "SKInstance");
   });
 }
