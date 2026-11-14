@@ -483,6 +483,18 @@ function getDisplayTitle(title: string, pagePath?: string): string {
   return local || original;
 }
 
+const TOPIC_ENTRY_TITLES = new Map([
+  ["prt", "PRT"],
+  ["sk-instance", "SKInstance"],
+]);
+
+function getDirectoryDisplayTitle(title: string, directoryPath: string): string {
+  const normalized = normalizeWikiPath(directoryPath);
+  const canonical = TOPIC_ENTRY_TITLES.get(basename(normalized).toLowerCase());
+  // An entry represents its own directory; only its ancestors are redundant.
+  return canonical ?? getDisplayTitle(title, normalized);
+}
+
 function buildHierarchy(repo: string, pages: WikiPage[]): WikiTreeNode {
   const root: WikiTreeNode = {
     id: "dir:",
@@ -548,7 +560,7 @@ function buildHierarchy(repo: string, pages: WikiPage[]): WikiTreeNode {
     const directory = directories.get(directoryPath);
     const page = pageByPath.get(representativePath.toLowerCase());
     if (!directory || !page) continue;
-    directory.title = getDisplayTitle(page.title, page.path);
+    directory.title = getDirectoryDisplayTitle(page.title, directory.path);
     directory.category = page.category;
     directory.pageSlug = page.slug;
   }
@@ -745,7 +757,7 @@ function buildPhysicalTaxonomyChildren(
     const directory = directories.get(directoryPath);
     const page = pageByRelativePath.get(representativePath.toLowerCase());
     if (!directory || !page) continue;
-    directory.title = getDisplayTitle(page.title, page.path);
+    directory.title = getDirectoryDisplayTitle(page.title, directory.path);
     directory.category = page.category;
     directory.pageSlug = page.slug;
   }
