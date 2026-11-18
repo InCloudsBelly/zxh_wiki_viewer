@@ -303,3 +303,161 @@ test("chapter links to another Wiki article stay inside the reader", () => {
   assert.ok(html.includes("<button"));
   assert.ok(html.includes("可见性章节"));
 });
+
+test("topic reading order accepts only nonnegative safe integers and has stable fallback", () => {
+  const files = [
+    { path: "lumen/architecture-and-frame.md", content: "---\ntitle: Lumen architecture\n---\n[First](z-first.md)" },
+    { path: "lumen/a-last.md", content: "---\ntitle: Last\norder: 12\n---\n" },
+    { path: "lumen/z-first.md", content: "---\ntitle: First\norder: 1\n---\n" },
+    { path: "lumen/m-middle.md", content: "---\ntitle: Middle\norder: 2\n---\n" },
+    { path: "lumen/b-tie.md", content: "---\ntitle: Tie\norder: 2\n---\n" },
+    { path: "lumen/nested/chapter.md", content: "---\ntitle: Nested\norder: 3\n---\n" },
+    { path: "lumen/max.md", content: "---\ntitle: Maximum\norder: 9007199254740991\n---\n" },
+    { path: "lumen/loose.md", content: "---\ntitle: Loose\n---\n" },
+    ...['"0"', "false", "-1", "0.5", ".nan", ".inf", "9007199254740992", "null", "[1]", "{rank: 1}", "2026-10-19", '""'].map((order, index) => ({
+      path: `lumen/invalid-${index}.md`,
+      content: `---\ntitle: Invalid ${index}\norder: ${order}\n---\n`,
+    })),
+  ];
+  const data = buildWikiData("local", "SelfWiki", files, { hierarchyMode: "selfwiki" });
+  const topic = data.hierarchy.children[0].children[0];
+  assert.equal(topic.pageSlug, "lumen__architecture-and-frame");
+  assert.deepEqual(topic.children.slice(0, 6).map((node) => [node.path, node.title]), [
+    ["lumen/z-first.md", "01 · First"],
+    ["lumen/b-tie.md", "02 · Tie"],
+    ["lumen/m-middle.md", "02 · Middle"],
+    ["lumen/nested/chapter.md", "03 · Nested"],
+    ["lumen/a-last.md", "12 · Last"],
+    ["lumen/max.md", "9007199254740991 · Maximum"],
+  ]);
+  assert.deepEqual(topic.children.slice(6).map((node) => node.path), [
+    ...Array.from({ length: 12 }, (_, index) => `lumen/invalid-${index}.md`),
+    "lumen/loose.md",
+  ]);
+  assert.ok(topic.children.slice(6).every((node) => !node.title.includes(" · ")));
+  assert.deepEqual(
+    pageRoutes(data.hierarchy).map((route) => route.slug).sort(),
+    data.pages.map((page) => page.slug).sort()
+  );
+  assert.deepEqual(
+    buildWikiData("local", "SelfWiki", [...files].reverse(), { hierarchyMode: "selfwiki" }),
+    data
+  );
+  assert.equal(data.pages.find((page) => page.path === "lumen/z-first.md").title, "First");
+  assert.equal(data.graph.nodes.find((node) => node.id === "lumen__z-first").displayTitle, "First");
+  assert.deepEqual(data.graph.links, [
+    { source: "lumen__architecture-and-frame", target: "lumen__z-first" },
+  ]);
+});
+
+test("an explicit zero-order overview is the first unique leaf of its peer L2 topic", () => {
+  const entries = [
+    ["lumen/architecture-and-frame.md", "Lumen overview"],
+    ["nanite/architecture-and-dataflow.md", "Nanite overview"],
+    ["rdg/graph-execution.md", "RDG overview"],
+    ["kgpr/architecture.md", "KGPR overview"],
+  ];
+  const data = buildWikiData("local", "SelfWiki", [
+    { path: "README.md", content: "---\ntitle: Wiki overview\norder: 0\n---\n" },
+    ...entries.map(([path, title]) => ({ path, content: `---\ntitle: ${title}\norder: 0\n---\n` })),
+    { path: "lumen/a-extra-zero.md", content: "---\ntitle: Another zero\norder: 0\n---\n" },
+    { path: "lumen/z-first.md", content: "---\ntitle: First\norder: 1\n---\n" },
+  ], { hierarchyMode: "selfwiki" });
+  const rendering = data.hierarchy.children.find((node) => node.path === "taxonomy/rendering");
+  assert.deepEqual(rendering.children.map((node) => [node.title, node.level]), [
+    ["Lumen", 2], ["Nanite", 2], ["RDG", 2], ["KGPR 技术专题", 2],
+  ]);
+  for (const [index, [path, title]] of entries.entries()) {
+    const topic = rendering.children[index];
+    assert.equal(topic.pageSlug, undefined, path);
+    assert.equal(topic.children[0].path, path);
+    assert.equal(topic.children[0].title, `00 · ${title}`);
+    assert.equal(topic.children[0].kind, "page");
+    assert.equal(topic.children[0].level, 3);
+    assert.deepEqual(topic.children[0].children, []);
+    assert.equal(data.pages.find((page) => page.path === path).title, title);
+  }
+  assert.equal(data.hierarchy.pageSlug, "README");
+  assert.equal(data.hierarchy.level, 0);
+  assert.equal(data.hierarchy.title, "Wiki overview");
+  assert.deepEqual(
+    pageRoutes(data.hierarchy).map((route) => route.slug).sort(),
+    data.pages.map((page) => page.slug).sort()
+  );
+});
+
+test("ordered body leaves precede evidence groups across directories and taxonomy subgroups", () => {
+  const data = buildWikiData("local", "SelfWiki", [
+    { path: "kgpr/architecture.md", content: "---\ntitle: KGPR overview\norder: 0\n---\n" },
+    { path: "data/z-data.md", content: "---\ntitle: Data\norder: 1\n---\n" },
+    { path: "integration/a-integration.md", content: "---\ntitle: Integration\norder: 2\n---\n" },
+    { path: "kgpr/a-body.md", content: "---\ntitle: Body\norder: 3\n---\n" },
+    { path: "data/unranked.md", content: "# Unranked data" },
+    { path: "kgpr/new/unranked.md", content: "# New unranked page" },
+    { path: "sources/kgpr-source-set.md", content: "---\ntitle: KGPR evidence\norder: 0\n---\n" },
+    { path: "lumen/architecture-and-frame.md", content: "---\ntitle: Lumen overview\norder: 0\n---\n" },
+    { path: "lumen/z-body.md", content: "---\ntitle: Lumen body\norder: 1\n---\n" },
+    { path: "lumen/unranked.md", content: "# Unranked Lumen" },
+    { path: "sources/lumen-z-first.md", content: "---\ntitle: First evidence\norder: 0\n---\n" },
+    { path: "sources/lumen-a-last.md", content: "---\ntitle: Last evidence\norder: 2\n---\n" },
+    { path: "sources/lumen-unranked.md", content: "# Unranked evidence" },
+  ], { hierarchyMode: "selfwiki" });
+  const topics = data.hierarchy.children.find((node) => node.path === "taxonomy/rendering").children;
+  const kgpr = topics.find((node) => node.title === "KGPR 技术专题");
+  assert.deepEqual(kgpr.children.map((node) => node.path), [
+    "kgpr/architecture.md", "data/z-data.md", "integration/a-integration.md", "kgpr/a-body.md",
+    "taxonomy/kgpr-data", "taxonomy/kgpr-evidence", "kgpr/new",
+  ]);
+  assert.deepEqual(kgpr.children[4].children.map((node) => node.path), ["data/unranked.md"]);
+  assert.deepEqual(kgpr.children[5].children.map((node) => node.path), ["sources/kgpr-source-set.md"]);
+  const lumen = topics.find((node) => node.title === "Lumen");
+  assert.deepEqual(lumen.children.map((node) => node.path), [
+    "lumen/architecture-and-frame.md", "lumen/z-body.md", "taxonomy/lumen-evidence", "lumen/unranked.md",
+  ]);
+  assert.deepEqual(lumen.children[2].children.map((node) => node.path), [
+    "sources/lumen-z-first.md", "sources/lumen-a-last.md", "sources/lumen-unranked.md",
+  ]);
+  assert.deepEqual(
+    pageRoutes(data.hierarchy).map((route) => route.slug).sort(),
+    data.pages.map((page) => page.slug).sort()
+  );
+});
+
+test("legacy representatives and the default GitHub hierarchy ignore unrelated order metadata", () => {
+  const files = [
+    { path: "README.md", content: "---\ntitle: Wiki\n---\n" },
+    { path: "lumen/architecture-and-frame.md", content: "---\ntitle: Architecture\n---\n[Chapter](z-chapter.md)" },
+    { path: "lumen/z-chapter.md", content: "---\ntitle: Chapter\n---\n" },
+    { path: "lumen/a/index.md", content: "---\ntitle: Index\n---\n" },
+    { path: "lumen/a/detail.md", content: "---\ntitle: Detail\n---\n" },
+    { path: "sources/lumen-evidence.md", content: "---\ntitle: Evidence\n---\n" },
+  ];
+  const selfwiki = buildWikiData("local", "SelfWiki", files, { hierarchyMode: "selfwiki" });
+  assert.equal(selfwiki.hierarchy.children[0].children[0].pageSlug, "lumen__architecture-and-frame");
+  for (const order of ['"0"', "false", "null", "-1", "0.5", ".nan", ".inf", "9007199254740992"]) {
+    const invalid = files.map((file) => ({
+      ...file,
+      content: file.content.replace("---\n", `---\norder: ${order}\n`),
+    }));
+    const data = buildWikiData("local", "SelfWiki", invalid, { hierarchyMode: "selfwiki" });
+    assert.deepEqual(data.hierarchy, selfwiki.hierarchy, order);
+    assert.deepEqual(data.graph, selfwiki.graph, order);
+  }
+  const nonzeroRepresentative = files.map((file) => file.path === "lumen/architecture-and-frame.md"
+    ? { ...file, content: file.content.replace("---\n", "---\norder: 5\n") }
+    : file);
+  assert.deepEqual(
+    buildWikiData("local", "SelfWiki", nonzeroRepresentative, { hierarchyMode: "selfwiki" }).hierarchy,
+    selfwiki.hierarchy
+  );
+  const filesystem = buildWikiData("owner", "GitHubRepo", files);
+  const ordered = files.map((file, index) => ({
+    ...file,
+    content: file.content.replace("---\n", `---\norder: ${index}\n`),
+  }));
+  for (const options of [{}, { hierarchyMode: "filesystem" }]) {
+    const data = buildWikiData("owner", "GitHubRepo", ordered, options);
+    assert.deepEqual(data.hierarchy, filesystem.hierarchy);
+    assert.deepEqual(data.graph, filesystem.graph);
+  }
+});

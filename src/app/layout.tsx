@@ -3,6 +3,7 @@ import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import "katex/dist/katex.min.css";
 import "./globals.css";
+import "@/components/ImagePreview.css";
 import "@/components/MarkdownMath.css";
 
 const geistSans = Geist({

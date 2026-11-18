@@ -658,14 +658,23 @@ function matchesTaxonomySelector(
   );
 }
 
+function getReadingOrder(page: WikiPage): number | undefined {
+  const order = page.frontmatter.order;
+  return typeof order === "number" && Number.isSafeInteger(order) && order >= 0
+    ? order
+    : undefined;
+}
+
 function buildTaxonomyPageNode(
   page: WikiPage,
   level: number,
   idPrefix: string
 ): WikiTreeNode {
+  const order = getReadingOrder(page);
+  const title = getDisplayTitle(page.title, page.path);
   return {
     id: `${idPrefix}:page:${page.slug}`,
-    title: getDisplayTitle(page.title, page.path),
+    title: order === undefined ? title : `${String(order).padStart(2, "0")} · ${title}`,
     path: normalizeWikiPath(page.path),
     kind: "page",
     category: page.category,
@@ -1308,8 +1317,26 @@ function buildSelfWikiTaxonomyNode(
   const representative = selected.find(
     (page) => normalizedTaxonomyPath(page.path) === representativePath
   );
-  const childNodes: WikiTreeNode[] = [];
-  const claimed = new Set<string>();
+  const overview = definition.level === 2 && representative && getReadingOrder(representative) === 0
+    ? representative
+    : undefined;
+  // Lift ordered body pages across folders, but retain the declared evidence groups.
+  const orderedPages = definition.level >= 2
+    ? selected.filter((page) =>
+        page !== representative && getReadingOrder(page) !== undefined
+        && !(definition.children ?? []).some((child) =>
+          child.key.endsWith("-evidence") && matchesTaxonomySelector(page.path, child.selector)
+        )
+      ).sort((a, b) =>
+        getReadingOrder(a)! - getReadingOrder(b)!
+        || a.path.localeCompare(b.path, "zh-CN", { numeric: true })
+      )
+    : [];
+  if (overview) orderedPages.unshift(overview);
+  const childNodes = orderedPages.map((page) =>
+    buildTaxonomyPageNode(page, definition.level + 1, `taxonomy:${definition.key}`)
+  );
+  const claimed = new Set(orderedPages.map((page) => normalizedTaxonomyPath(page.path)));
   if (representative) claimed.add(normalizedTaxonomyPath(representative.path));
 
   for (const child of definition.children ?? []) {
@@ -1345,7 +1372,7 @@ function buildSelfWikiTaxonomyNode(
     kind: definition.level === 0 ? "root" : "directory",
     category: definition.category,
     level: definition.level,
-    pageSlug: representative?.slug,
+    pageSlug: overview ? undefined : representative?.slug,
     children: childNodes,
   };
 }

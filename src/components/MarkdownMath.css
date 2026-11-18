@@ -1,4 +1,5 @@
 .wiki-content .katex {
+  color: inherit;
   font-size: 1.08em;
 }
 
@@ -25,4 +26,46 @@
   color: var(--accent-vivid) !important;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.wiki-content .wiki-equation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 0.75rem;
+  margin-block: 0.75rem;
+  scroll-margin-block-start: 0.75rem;
+}
+
+.wiki-content .wiki-equation > .katex-display {
+  margin: 0;
+}
+
+.wiki-content .wiki-equation > :is(.wiki-equation-number, p:has(> .wiki-equation-number)) {
+  justify-self: end;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* Older Wiki formulas contain their own panel and SVG ink colors. */
+.wiki-content [data-wiki-math] {
+  background: transparent !important;
+  border: 0 !important;
+  color: var(--text-primary);
+}
+
+.wiki-content [data-wiki-math] > svg {
+  fill: currentColor;
+}
+
+.wiki-content [data-wiki-math] > svg > rect[fill="#f7fafc"] {
+  fill: none;
+}
+
+.wiki-content [data-wiki-math] > svg :is([fill="#163047"], g[style*="fill:"]) {
+  fill: currentColor !important;
+}
+
+.wiki-content [data-wiki-math] > svg [stroke="#163047"] {
+  stroke: currentColor;
 }

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700">
+<rect width="1200" height="700" fill="#fff8ed"/>
+<rect x="100" y="180" width="360" height="280" rx="28" fill="#e07a5f"/>
+<path d="M500 320h180" stroke="#513a31" stroke-width="12"/>
+<rect x="740" y="180" width="360" height="280" rx="28" fill="#8fa898"/>
+<text x="280" y="335" text-anchor="middle" font-family="sans-serif" font-size="40" fill="#191716">Producer</text>
+<text x="920" y="335" text-anchor="middle" font-family="sans-serif" font-size="40" fill="#191716">Consumer</text>
+<text x="600" y="590" text-anchor="middle" font-family="sans-serif" font-size="28" fill="#513a31">Zoom to inspect the details</text>
+</svg>

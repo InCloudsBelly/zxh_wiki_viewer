@@ -32,19 +32,19 @@
 
 /* ─── Light mode ─── */
 [data-theme="light"] {
-  --bg-primary: #f5f0eb;
-  --bg-secondary: #ece7e1;
-  --bg-tertiary: #e3ded8;
-  --bg-hover: #dbd5ce;
-  --bg-active: #d1cbc4;
+  --bg-primary: #eee4d1;
+  --bg-secondary: #e8dcc6;
+  --bg-tertiary: #e1d4bc;
+  --bg-hover: #dacbb1;
+  --bg-active: #d2c1a5;
 
   --text-primary: #1a1714;
   --text-secondary: #3a3530;
-  --text-tertiary: #6e675f;
+  --text-tertiary: #584f43;
   --text-link: #8b4332;
 
-  --border-primary: #ddd7d0;
-  --border-secondary: #ccc5bd;
+  --border-primary: #d5c7ae;
+  --border-secondary: #bca98c;
 
   --accent-vivid: #9e4535;
   --accent-gold: #a08560;
@@ -104,8 +104,18 @@ body {
 
 /* ─── Markdown content ─── */
 .wiki-content {
+  --wiki-font: "Times New Roman", FangSong, "仿宋", serif;
+  font-family: var(--wiki-font);
   line-height: 1.85;
-  font-size: 0.95rem;
+  font-size: 1.0625rem;
+}
+
+.wiki-content svg text,
+.wiki-content .mermaid-rendered .label,
+.wiki-content .mermaid-rendered .nodeLabel,
+.wiki-content .mermaid-rendered .edgeLabel,
+.wiki-content .ascii-diagram-pre code {
+  font-family: var(--wiki-font) !important;
 }
 
 .wiki-content h1 {
@@ -160,6 +170,10 @@ body {
   padding-left: 1.5rem;
 }
 
+.wiki-content ul { list-style-type: disc; }
+.wiki-content ol { list-style-type: decimal; }
+.wiki-content li.task-list-item { list-style-type: none; }
+
 .wiki-content li {
   margin-bottom: 0.35rem;
   color: var(--text-primary);
@@ -167,7 +181,7 @@ body {
 .wiki-content li::marker { color: var(--text-tertiary); }
 
 .wiki-content code {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--wiki-font);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-primary);
   border-radius: 4px;
@@ -249,6 +263,17 @@ body {
 .wiki-content svg {
   max-width: 100%;
   height: auto;
+}
+
+.wiki-content .wiki-figure {
+  margin-block: 1rem;
+  scroll-margin-block-start: 0.75rem;
+}
+
+.wiki-content .wiki-figure > figcaption {
+  margin-block-start: 0.4rem;
+  color: var(--text-secondary);
+  font-size: 0.92em;
 }
 
 /* Syntax highlighting: dark mode */

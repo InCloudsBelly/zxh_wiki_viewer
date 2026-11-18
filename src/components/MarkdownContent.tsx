@@ -9,6 +9,7 @@ import { markdownOptions } from "../lib/markdown.mjs";
 import type { WikiPage } from "@/lib/github";
 import type { Components } from "react-markdown";
 import MermaidBlock from "./MermaidBlock";
+import ImagePreview from "./ImagePreview";
 
 function copyToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
@@ -339,7 +340,7 @@ function MarkdownContent({
       )}
 
       {/* Markdown content */}
-      <div className="wiki-content">
+      <ImagePreview key={page.slug}>
         <ReactMarkdown
           remarkPlugins={options.remarkPlugins}
           rehypePlugins={[
@@ -351,7 +352,7 @@ function MarkdownContent({
         >
           {page.content}
         </ReactMarkdown>
-      </div>
+      </ImagePreview>
 
       {/* Outgoing links */}
       {page.links.length > 0 && (
